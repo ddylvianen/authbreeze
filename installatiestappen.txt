@@ -1,0 +1,352 @@
+258155c2f2d8db00319c65e8370009466ebcd573 laatste commit
+composer diagnose (voor php versie composer)
+composer global require laravel/installer
+laravel new breezedemo
+none (geen frontend framework)
+mysql (geen migrate)
+migrationfile aanpassen met rolname
+model aangepast met rolname
+
+composer require laravel/breeze --dev
+php artisan breeze:install blade
+php artisan migrate
+npm install
+npm run build
+
+composer run dev
+
+
+bij register.blade.php toevoegen
+
+<div class="mt-4">
+    <x-input-label for="rolname" :value="__('rolname')" />
+
+    <x-text-input id="rolname" class="block mt-1 w-full"
+                    type="text"
+                    name="rolname" required autocomplete="rolname" />
+
+    <x-input-error :messages="$errors->get('rolname')" class="mt-2" />
+</div>
+
+
+
+app\Http\Controllers\Auth\RegisteredUserController.php uitbreiden met:
+1) 'rolname'  => ['required', 'string', 'max:20'],
+2) 'rolname' => $request->rolname,
+
+public function store(Request $request): RedirectResponse
+    {
+        $request->validate([
+            'name' => ['required', 'string', 'max:255'],
+            'email' => ['required', 'string', 'lowercase', 'email', 'max:255', 'unique:'.User::class],
+            'password' => ['required', 'confirmed', Rules\Password::defaults()],
+            'rolname'  => ['required', 'string', 'max:20'],
+        ]);
+
+        $user = User::create([
+            'name' => $request->name,
+            'email' => $request->email,
+            'password' => Hash::make($request->password),
+            'rolname' => $request->rolname,
+        ]);
+
+        event(new Registered($user));
+
+        Auth::login($user);
+
+        return redirect(route('dashboard', absolute: false));
+    }
+
+toevoegen
+
+php artisan make:middleware RoleMiddleware
+
+========================================================
+
+In RolMiddleware.php class:
+
+<?php
+
+namespace App\Http\Middleware;
+
+use Closure;
+use Illuminate\Http\Request;
+use Symfony\Component\HttpFoundation\Response;
+use Illuminate\Support\Facades\Auth;
+
+class RoleMiddleware
+{
+    /**
+     * Handle an incoming request.
+     *
+     * @param  \Closure(\Illuminate\Http\Request): (\Symfony\Component\HttpFoundation\Response)  $next
+     */
+    public function handle(Request $request, Closure $next, ...$roles): Response
+    {
+        // Let op ...$roles is een variadische parameter en moet zo geschreven worden met drie puntjes!!!
+
+        $user = Auth::user();
+        if (!$user) {
+            // niet ingelogd: naar login
+            return redirect()->route('login');
+        }
+
+        $userRole = strtolower($user->rolname ?? '');
+
+        if (!in_array($userRole, $roles, true)) {
+            abort(403, 'Onvoldoende rechten.');
+        }
+
+
+        return $next($request);
+    }
+}
+
+==================================================================
+
+Ga naar Bootstrap/app.php vervang de bestaande code naar de onderstaande code:
+
+<?php
+
+use Illuminate\Foundation\Application;
+use Illuminate\Foundation\Configuration\Exceptions;
+use Illuminate\Foundation\Configuration\Middleware;
+
+return Application::configure(basePath: dirname(__DIR__))
+    ->withRouting(
+        web: __DIR__.'/../routes/web.php',
+        commands: __DIR__.'/../routes/console.php',
+        health: '/up',
+    )
+    ->withMiddleware(function (Middleware $middleware): void {
+        // Alias voor jouw role-middleware (en evt. andere)
+        $middleware->alias([
+            'role'     => \App\Http\Middleware\RoleMiddleware::class,
+            'auth'     => \App\Http\Middleware\Authenticate::class,
+            'verified' => \Illuminate\Auth\Middleware\EnsureEmailIsVerified::class,
+        ]);
+
+        // (Optioneel) extra middleware aan groepen toevoegen:
+        // $middleware->appendToGroup('web', [\Illuminate\View\Middleware\ShareErrorsFromSession::class]);
+    })
+    ->withExceptions(function (Exceptions $exceptions): void {
+        //
+    })->create();
+
+=======================================================================================
+
+Ga naar App/http/Middleware/ en maak de class Authenticate.php aan en voeg de code toe:
+
+<?php
+
+namespace App\Http\Middleware;
+
+use Illuminate\Auth\Middleware\Authenticate as Middleware;
+
+class Authenticate extends Middleware
+{
+    /**
+     * Waarheen redirecten als de gebruiker niet is ingelogd.
+     */
+    protected function redirectTo($request): ?string
+    {
+        // Als het een API-call is, geen redirect maar 401 teruggeven
+        if ($request->expectsJson()) {
+            return null;
+        }
+
+        // Anders: stuur naar de loginpagina
+        return route('login');
+    }
+}
+
+=========================================================================================
+
+Maak een controller aan met php artisan make:controller TandartsController --resource
+Pas de index method aan:
+
+/**
+* Display a listing of the resource.
+*/
+public function index()
+{
+    return view('tandarts.index', [
+        'title' => 'Tandarts Home'
+    ]);
+}
+
+
+Maak een route in web.php:
+Route::get('/beheren', [BeherenController::class, 'index'])
+            ->name('beheren.index');
+
+Maak een view aan:
+in de map resources/views/Tandarts het bestand index.blade.php
+
+=======================================================================================
+
+
+Pas de route in web.php aan:
+Route::get('/tandarts', [TandartsController::class, 'index'])
+            ->name('tandarts.index')
+
+Test in de browser door in te loggen als Tandarts en dan in de url localhost:8000/beheren te zetten
+resultaat pagina is beheren is zichtbaar. Log in als andere rol-> resultaat niet zichtbaar 403 error
+
+================================================================================================
+
+Maak een link bij resources/views/layouts/navigation.blade.php 
+
+ <!-- Navigation Links -->
+<div class="hidden space-x-8 sm:-my-px sm:ms-10 sm:flex">
+    <x-nav-link :href="route('dashboard')" :active="request()->routeIs('dashboard')">
+        {{ __('Dashboard') }}
+    </x-nav-link>
+</div>
+// De onderstaande link toevoegen
+<div class="hidden space-x-8 sm:-my-px sm:ms-10 sm:flex">
+    <x-nav-link :href="route('beheren.index')" :active="request()->routeIs('admin')">
+        {{ __('Beheren') }}
+    </x-nav-link>
+</div>
+
+=====================================================================================================
+
+Ga naar web.php en pas de route aan van de welcome.blade.php pagina
+
+Route::get('/', function () {
+    return view('welcome');
+})->name('welcome');
+
+====================================================================================================
+
+Ga naar: \app\Http\Controllers\Auth\AuthenticatedSessionController.php
+
+en pas deze aan zoals hieronder:
+
+<?php
+
+namespace App\Http\Controllers\Auth;
+
+use App\Http\Controllers\Controller;
+use App\Http\Requests\Auth\LoginRequest;
+use Illuminate\Http\RedirectResponse;
+use Illuminate\Http\Request;
+use Illuminate\Support\Facades\Auth;
+use Illuminate\View\View;
+
+class AuthenticatedSessionController extends Controller
+{
+    /**
+     * Display the login view.
+     */
+    public function create(): View
+    {
+        return view('auth.login');
+    }
+
+    /**
+     * Handle an incoming authentication request.
+     */
+    public function store(LoginRequest $request): RedirectResponse
+    {
+        $request->authenticate();
+
+        $request->session()->regenerate();
+
+        $role = strtolower($request->user()->rolname ?? '');
+
+        // return redirect()->intended(route('dashboard', absolute: false));
+        return redirect()->intended(match($role) {
+            'admin'        => route('beheren.index'),
+            'gast'         => route('gast.index'),
+            'gebruiker'    => route('gebruiker.index'),
+            'medewerker'   => route('mederwerker.index'),
+            default        => route('welcome'),
+        });
+       
+        // route('dashboard', absolute: false));
+    }
+
+    /**
+     * Destroy an authenticated session.
+     */
+    public function destroy(Request $request): RedirectResponse
+    {
+        Auth::guard('web')->logout();
+
+        $request->session()->invalidate();
+
+        $request->session()->regenerateToken();
+
+        return redirect('/');
+    }
+}
+========================================================================
+
+Voor het geven van rechten aan meerdere gebruikersrollen kun je de middleware uitbreiden
+met meerdere rollen kommagescheiden zoals hieronder in web.php. Ook meer dan twee is mogelijk.
+
+
+Route::get('/patient', [PatientController::class, 'index'])
+            ->name('patient.index')
+            ->middleware(['auth','role:patient,praktijkmanagement']);
+
+Route::get('/tandarts', [TandartsController::class, 'index'])
+            ->name('tandarts.index')
+            ->middleware(['auth','role:tandarts,praktijkmanagement']);
+
+Route::get('/mondhygienist', [MondhygienistController::class, 'index'])
+            ->name('mondhygienist.index')
+            ->middleware(['auth','role:mondhygienist,praktijkmanagement']);
+
+Route::get('/assistent', [AssistentController::class, 'index'])
+            ->name('assistent.index')
+            ->middleware(['auth','role:assistent,praktijkmanagement']);
+
+Route::get('/praktijkmanagement', [PraktijkmanagementController::class, 'index'])
+            ->name('praktijkmanagement.index')
+            ->middleware(['auth','role:praktijkmanagement']);
+
+
+===========================================================================
+
+Hyperlinks toekennen aan gebruikersrollen doe je in navigation.blade.php
+
+@if (Auth::check() && in_array(Auth::user()->rolname, ['patient', 'praktijkmanagement']))
+                    
+    <div class="hidden space-x-8 sm:-my-px sm:ms-10 sm:flex">
+        <x-nav-link :href="route('patient.index')" 
+                    :active="request()->routeIs('patient.index')">
+            {{ __('Patient') }}
+        </x-nav-link>
+    </div>
+@endif
+
+==============================================================================
+
+Elke homepage van elke gebruikersrol krijgt de onderstaande code:
+
+<x-app-layout>
+    <x-slot name="header">
+        <h2 class="font-semibold text-xl text-gray-800 leading-tight">
+            {{ __('Dashboard') }}
+        </h2>
+    </x-slot>
+
+
+    <div class="py-12">
+        <div class="max-w-7xl mx-auto sm:px-6 lg:px-8">
+            <div class="bg-white overflow-hidden shadow-sm sm:rounded-lg">
+                <div class="p-6 text-gray-900">
+                    {{ $title }}
+                </div>
+            </div>
+        </div>
+    </div>
+</x-app-layout>
+===============================================================================
+php -v = 8.3.14
+composer -v = 2.8.11
+node -v = 22.19.0
+npm -v = 10.9.3
